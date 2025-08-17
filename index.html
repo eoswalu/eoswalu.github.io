@@ -9,6 +9,10 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
         }
 
         body {
@@ -603,6 +607,74 @@
                     });
                     
                     console.log(`Removed added names: ${lastAction.names.join(', ')}`);
+                    
+                } else if (lastAction.type === 'move') {
+                    // Undo a move - restore the name to its original position
+                    const nameToMove = lastAction.name;
+                    
+                    // Find the name element
+                    const nameElement = [...document.querySelectorAll('.name-item')]
+                        .find(item => item.textContent === nameToMove);
+                    
+                    if (nameElement) {
+                        let targetContainer;
+                        
+                        // Find the target container to restore to
+                        if (lastAction.from === 'POOL') {
+                            targetContainer = document.querySelector('.name-pool');
+                        } else {
+                            targetContainer = document.querySelector(`[data-tier="${lastAction.from}"]`);
+                        }
+                        
+                        if (targetContainer) {
+                            // Get all name items in the target container
+                            const existingItems = [...targetContainer.querySelectorAll('.name-item')];
+                            
+                            // Insert at the original position
+                            if (lastAction.fromPosition >= existingItems.length) {
+                                targetContainer.appendChild(nameElement);
+                            } else {
+                                const referenceItem = existingItems[lastAction.fromPosition];
+                                if (referenceItem) {
+                                    targetContainer.insertBefore(nameElement, referenceItem);
+                                } else {
+                                    targetContainer.appendChild(nameElement);
+                                }
+                            }
+                            
+                            console.log(`Moved ${nameToMove} back to ${lastAction.from} at position ${lastAction.fromPosition}`);
+                        }
+                    }
+                    
+                } else if (lastAction.type === 'reset') {
+                    // Undo a reset - restore all names to their original positions
+                    lastAction.moves.forEach(moveData => {
+                        const nameElement = [...document.querySelectorAll('.name-item')]
+                            .find(item => item.textContent === moveData.name);
+                        
+                        if (nameElement) {
+                            let targetContainer = document.querySelector(`[data-tier="${moveData.from}"]`);
+                            
+                            if (targetContainer) {
+                                // Get existing items in target container
+                                const existingItems = [...targetContainer.querySelectorAll('.name-item')];
+                                
+                                // Insert at original position
+                                if (moveData.fromPosition >= existingItems.length) {
+                                    targetContainer.appendChild(nameElement);
+                                } else {
+                                    const referenceItem = existingItems[moveData.fromPosition];
+                                    if (referenceItem) {
+                                        targetContainer.insertBefore(nameElement, referenceItem);
+                                    } else {
+                                        targetContainer.appendChild(nameElement);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    
+                    console.log(`Restored ${lastAction.moves.length} names from reset`);
                 }
                 
                 // Save changes to localStorage
@@ -796,12 +868,39 @@
             
             if (!draggedElement) return;
             
+            // Record the current position before moving (for undo functionality)
+            const nameText = draggedElement.textContent;
+            let fromLocation = 'POOL'; // default
+            let fromPosition = -1;
+            
+            // Find where the element is currently located
+            const currentParent = draggedElement.parentElement;
+            if (currentParent.classList.contains('tier-items')) {
+                fromLocation = currentParent.dataset.tier;
+                fromPosition = [...currentParent.querySelectorAll('.name-item')].indexOf(draggedElement);
+            } else if (currentParent.classList.contains('name-pool')) {
+                fromLocation = 'POOL';
+                fromPosition = [...currentParent.querySelectorAll('.name-item')].indexOf(draggedElement);
+            }
+            
             if (container.classList.contains('name-pool')) {
+                const toPosition = container.querySelectorAll('.name-item').length;
+                
+                // Add to action history for undo
+                actionHistory.push({
+                    type: 'move',
+                    name: nameText,
+                    from: fromLocation,
+                    fromPosition: fromPosition,
+                    to: 'POOL',
+                    toPosition: toPosition
+                });
+                
                 container.appendChild(draggedElement);
                 // Add dropped glow effect
                 addDroppedGlow(draggedElement);
                 // Save positions to localStorage
-                saveTierPositions();
+                saveToLocalStorage();
                 return;
             }
             
@@ -812,95 +911,104 @@
                 const existingItems = [...container.querySelectorAll('.name-item')]
                     .filter(item => item !== draggedElement);
                 
+                let finalPosition = 0; // default position
+                
                 // If no existing items, just append
                 if (existingItems.length === 0) {
+                    finalPosition = 0;
                     container.appendChild(draggedElement);
-                    // Add dropped glow effect
-                    addDroppedGlow(draggedElement);
-                    // Save positions to localStorage
-                    saveTierPositions();
-                    return;
-                }
-                
-                // Group items by rows first
-                const itemsByRow = [];
-                let currentRow = [];
-                let currentRowY = null;
-                
-                existingItems.forEach(item => {
-                    const itemRect = item.getBoundingClientRect();
-                    const itemY = Math.round(itemRect.top);
-                    
-                    if (currentRowY === null || Math.abs(itemY - currentRowY) < 10) {
-                        currentRow.push(item);
-                        currentRowY = itemY;
-                    } else {
-                        if (currentRow.length > 0) {
-                            itemsByRow.push(currentRow);
-                        }
-                        currentRow = [item];
-                        currentRowY = itemY;
-                    }
-                });
-                
-                if (currentRow.length > 0) {
-                    itemsByRow.push(currentRow);
-                }
-                
-                // Find which row the mouse is closest to vertically
-                let targetRow = null;
-                let closestRowDistance = Infinity;
-                
-                itemsByRow.forEach(row => {
-                    const firstItem = row[0];
-                    const itemRect = firstItem.getBoundingClientRect();
-                    const rowY = itemRect.top + itemRect.height / 2;
-                    const distance = Math.abs(mouseY - rowY);
-                    
-                    if (distance < closestRowDistance) {
-                        closestRowDistance = distance;
-                        targetRow = row;
-                    }
-                });
-                
-                if (!targetRow) {
-                    container.appendChild(draggedElement);
-                    addDroppedGlow(draggedElement);
-                    saveTierPositions();
-                    return;
-                }
-                
-                // Within the target row, find insertion point horizontally
-                let insertBefore = null;
-                
-                for (let item of targetRow) {
-                    const itemRect = item.getBoundingClientRect();
-                    const itemCenterX = itemRect.left + itemRect.width / 2;
-                    
-                    if (mouseX < itemCenterX) {
-                        insertBefore = item;
-                        break;
-                    }
-                }
-                
-                if (insertBefore) {
-                    container.insertBefore(draggedElement, insertBefore);
                 } else {
-                    // Insert after the last item in the target row
-                    const lastItemInRow = targetRow[targetRow.length - 1];
-                    const lastItemIndex = existingItems.indexOf(lastItemInRow);
-                    const nextItem = existingItems[lastItemIndex + 1];
+                    // Group items by rows first
+                    const itemsByRow = [];
+                    let currentRow = [];
+                    let currentRowY = null;
                     
-                    if (nextItem) {
-                        container.insertBefore(draggedElement, nextItem);
-                    } else {
+                    existingItems.forEach(item => {
+                        const itemRect = item.getBoundingClientRect();
+                        const itemY = Math.round(itemRect.top);
+                        
+                        if (currentRowY === null || Math.abs(itemY - currentRowY) < 10) {
+                            currentRow.push(item);
+                            currentRowY = itemY;
+                        } else {
+                            if (currentRow.length > 0) {
+                                itemsByRow.push(currentRow);
+                            }
+                            currentRow = [item];
+                            currentRowY = itemY;
+                        }
+                    });
+                    
+                    if (currentRow.length > 0) {
+                        itemsByRow.push(currentRow);
+                    }
+                    
+                    // Find which row the mouse is closest to vertically
+                    let targetRow = null;
+                    let closestRowDistance = Infinity;
+                    
+                    itemsByRow.forEach(row => {
+                        const firstItem = row[0];
+                        const itemRect = firstItem.getBoundingClientRect();
+                        const rowY = itemRect.top + itemRect.height / 2;
+                        const distance = Math.abs(mouseY - rowY);
+                        
+                        if (distance < closestRowDistance) {
+                            closestRowDistance = distance;
+                            targetRow = row;
+                        }
+                    });
+                    
+                    if (!targetRow) {
+                        finalPosition = existingItems.length;
                         container.appendChild(draggedElement);
+                    } else {
+                        // Within the target row, find insertion point horizontally
+                        let insertBefore = null;
+                        
+                        for (let item of targetRow) {
+                            const itemRect = item.getBoundingClientRect();
+                            const itemCenterX = itemRect.left + itemRect.width / 2;
+                            
+                            if (mouseX < itemCenterX) {
+                                insertBefore = item;
+                                break;
+                            }
+                        }
+                        
+                        if (insertBefore) {
+                            finalPosition = existingItems.indexOf(insertBefore);
+                            container.insertBefore(draggedElement, insertBefore);
+                        } else {
+                            // Insert after the last item in the target row
+                            const lastItemInRow = targetRow[targetRow.length - 1];
+                            const lastItemIndex = existingItems.indexOf(lastItemInRow);
+                            const nextItem = existingItems[lastItemIndex + 1];
+                            
+                            if (nextItem) {
+                                finalPosition = existingItems.indexOf(nextItem);
+                                container.insertBefore(draggedElement, nextItem);
+                            } else {
+                                finalPosition = existingItems.length;
+                                container.appendChild(draggedElement);
+                            }
+                        }
                     }
                 }
+                
+                // Add to action history for undo
+                actionHistory.push({
+                    type: 'move',
+                    name: nameText,
+                    from: fromLocation,
+                    fromPosition: fromPosition,
+                    to: container.dataset.tier,
+                    toPosition: finalPosition
+                });
                 
                 addDroppedGlow(draggedElement);
                 // Save positions to localStorage
-                saveTierPositions();
+                saveToLocalStorage();
             }
         }
 
@@ -951,6 +1059,31 @@
         });
 
         function resetTiers() {
+            // Record all current positions for undo functionality
+            const moveActions = [];
+            
+            document.querySelectorAll('.tier-items').forEach(tierContainer => {
+                const tier = tierContainer.dataset.tier;
+                const nameElements = [...tierContainer.querySelectorAll('.name-item')];
+                
+                nameElements.forEach((element, index) => {
+                    moveActions.push({
+                        name: element.textContent,
+                        from: tier,
+                        fromPosition: index,
+                        to: 'POOL'
+                    });
+                });
+            });
+            
+            // If there were moves, add a batch reset action to history
+            if (moveActions.length > 0) {
+                actionHistory.push({
+                    type: 'reset',
+                    moves: moveActions
+                });
+            }
+            
             const allNameElements = document.querySelectorAll('.name-item');
             const namePool = document.querySelector('.name-pool');
             
@@ -959,7 +1092,7 @@
             });
             
             // Save the reset state to localStorage
-            saveTierPositions();
+            saveToLocalStorage();
         }
 
         function shuffleNames() {
