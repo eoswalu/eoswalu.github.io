@@ -247,32 +247,33 @@
                 <button class="btn btn-primary" onclick="resetTiers()">Reset All</button>
                 <button class="btn btn-secondary" onclick="shuffleNames()">Shuffle Names</button>
                 <button class="btn btn-success" onclick="downloadImage()">Save as Image</button>
+                <button class="btn btn-primary" onclick="clearAllData()">Clear All Data</button>
             </div>
 
             <div class="tier-container">
                 <div class="tier-row">
                     <div class="tier-label tier-s">S</div>
-                    <div class="tier-items" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                    <div class="tier-items" data-tier="S" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div>
                 
                 <div class="tier-row">
                     <div class="tier-label tier-a">A</div>
-                    <div class="tier-items" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                    <div class="tier-items" data-tier="A" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div>
                 
                 <div class="tier-row">
                     <div class="tier-label tier-b">B</div>
-                    <div class="tier-items" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                    <div class="tier-items" data-tier="B" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div>
                 
                 <div class="tier-row">
                     <div class="tier-label tier-c">C</div>
-                    <div class="tier-items" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                    <div class="tier-items" data-tier="C" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div>
                 
                 <div class="tier-row">
                     <div class="tier-label tier-d">D</div>
-                    <div class="tier-items" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                    <div class="tier-items" data-tier="D" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div>
             </div>
 
@@ -313,17 +314,90 @@
             "Vivienne Y"
         ];
 
-        // Get custom names from memory (in a real app, this would be from a database)
-        let customNames = [];
-        let actionHistory = []; // Track all actions (deletes and adds) in order
+        // localStorage keys
+        const STORAGE_KEYS = {
+            CUSTOM_NAMES: 'tierlist_custom_names',
+            TIER_POSITIONS: 'tierlist_positions',
+            ACTION_HISTORY: 'tierlist_action_history'
+        };
+
+        // Get custom names from localStorage
+        let customNames = JSON.parse(localStorage.getItem(STORAGE_KEYS.CUSTOM_NAMES) || '[]');
+        let actionHistory = JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTION_HISTORY) || '[]');
 
         function getAllNames() {
             return [...names, ...customNames];
         }
 
+        // Save data to localStorage
+        function saveToLocalStorage() {
+            localStorage.setItem(STORAGE_KEYS.CUSTOM_NAMES, JSON.stringify(customNames));
+            localStorage.setItem(STORAGE_KEYS.ACTION_HISTORY, JSON.stringify(actionHistory));
+            saveTierPositions();
+        }
+
+        function saveTierPositions() {
+            const positions = {};
+            
+            // Save tier positions
+            document.querySelectorAll('.tier-items').forEach(tierContainer => {
+                const tier = tierContainer.dataset.tier;
+                const names = [...tierContainer.querySelectorAll('.name-item')].map(item => item.textContent);
+                positions[tier] = names;
+            });
+            
+            // Save name pool positions
+            const namePool = document.querySelector('.name-pool');
+            const poolNames = [...namePool.querySelectorAll('.name-item')].map(item => item.textContent);
+            positions['POOL'] = poolNames;
+            
+            localStorage.setItem(STORAGE_KEYS.TIER_POSITIONS, JSON.stringify(positions));
+        }
+
+        function loadTierPositions() {
+            const saved = localStorage.getItem(STORAGE_KEYS.TIER_POSITIONS);
+            if (!saved) return;
+            
+            try {
+                const positions = JSON.parse(saved);
+                
+                // Clear all current positions
+                document.querySelectorAll('.tier-items').forEach(container => {
+                    container.innerHTML = '';
+                });
+                document.querySelector('.name-pool').querySelectorAll('.name-item').forEach(item => {
+                    item.remove();
+                });
+                
+                // Restore positions
+                Object.entries(positions).forEach(([location, namesList]) => {
+                    let container;
+                    
+                    if (location === 'POOL') {
+                        container = document.querySelector('.name-pool');
+                    } else {
+                        container = document.querySelector(`[data-tier="${location}"]`);
+                    }
+                    
+                    if (container) {
+                        namesList.forEach(name => {
+                            if (getAllNames().includes(name)) {
+                                const nameElement = createNameElement(name);
+                                container.appendChild(nameElement);
+                            }
+                        });
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error loading tier positions:', error);
+            }
+        }
+
         // Initialize the page
         window.onload = function() {
             loadNames();
+            loadTierPositions();
         };
 
         function allowDropOnDelete(event) {
@@ -381,6 +455,9 @@
                         nameItem.classList.remove('glow-left', 'glow-right');
                     });
                 });
+                
+                // Save to localStorage
+                saveToLocalStorage();
             }
         }
 
@@ -441,6 +518,7 @@
                         names: addedNames
                     });
                     console.log(`${addedNames.length} names added successfully!`);
+                    saveToLocalStorage();
                 }
                 
                 if (duplicateNames.length > 0) {
@@ -460,6 +538,7 @@
                         names: [inputText]
                     });
                     console.log("Name added successfully!");
+                    saveToLocalStorage();
                 } else {
                     alert("This name already exists!");
                 }
@@ -525,6 +604,9 @@
                     
                     console.log(`Removed added names: ${lastAction.names.join(', ')}`);
                 }
+                
+                // Save changes to localStorage
+                saveToLocalStorage();
             } else {
                 console.log("Nothing to undo");
             }
@@ -718,6 +800,8 @@
                 container.appendChild(draggedElement);
                 // Add dropped glow effect
                 addDroppedGlow(draggedElement);
+                // Save positions to localStorage
+                saveTierPositions();
                 return;
             }
             
@@ -733,6 +817,8 @@
                     container.appendChild(draggedElement);
                     // Add dropped glow effect
                     addDroppedGlow(draggedElement);
+                    // Save positions to localStorage
+                    saveTierPositions();
                     return;
                 }
                 
@@ -780,6 +866,7 @@
                 if (!targetRow) {
                     container.appendChild(draggedElement);
                     addDroppedGlow(draggedElement);
+                    saveTierPositions();
                     return;
                 }
                 
@@ -812,6 +899,8 @@
                 }
                 
                 addDroppedGlow(draggedElement);
+                // Save positions to localStorage
+                saveTierPositions();
             }
         }
 
@@ -868,12 +957,14 @@
             allNameElements.forEach(element => {
                 namePool.appendChild(element);
             });
+            
+            // Save the reset state to localStorage
+            saveTierPositions();
         }
 
         function shuffleNames() {
             const namePool = document.querySelector('.name-pool');
             const nameElements = [...namePool.querySelectorAll('.name-item')];
-            const headerContainer = namePool.querySelector('.name-pool-header');
             
             // Shuffle array
             for (let i = nameElements.length - 1; i > 0; i--) {
@@ -889,6 +980,27 @@
                 const namePool = document.querySelector('.name-pool');
                 namePool.appendChild(element);
             });
+            
+            // Save the shuffled state to localStorage
+            saveTierPositions();
+        }
+
+        function clearAllData() {
+            if (confirm('Are you sure you want to clear all saved data? This will remove all custom names and reset all tier positions.')) {
+                // Clear localStorage
+                localStorage.removeItem(STORAGE_KEYS.CUSTOM_NAMES);
+                localStorage.removeItem(STORAGE_KEYS.TIER_POSITIONS);
+                localStorage.removeItem(STORAGE_KEYS.ACTION_HISTORY);
+                
+                // Reset in-memory data
+                customNames = [];
+                actionHistory = [];
+                
+                // Reload the page to original state
+                loadNames();
+                
+                alert('All data has been cleared!');
+            }
         }
 
         function downloadImage() {
